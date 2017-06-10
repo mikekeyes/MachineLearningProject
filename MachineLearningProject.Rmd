@@ -1,0 +1,160 @@
+---
+title: "Machine Learning Project"
+author: "Mike Keyes"
+date: "June 2, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Machine Learning Project
+
+###Introduction
+The goal of this project is to use the Weight Lifting Exercise Dataset to create a model which can predict how a person instrumented with motion sensors is doing a weight lifting curl. From the assignment background:
+
+> Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+###Methodology
+In order to achieve the goal we will perform these steps:
+- Load the caret package
+- Download the raw data from the source
+- Clean the data
+- Split the training data into train, test and validation data sets
+- Check for outliers
+- Train several models on the training data set. 
+- Pick the best models based on accuracy with the training data set
+- Run these models against the Test data set to pick the best one. 
+- Run the winner against the Validation data set to measure the final accuracy. 
+
+
+## Data Load and Preparation
+
+First Load caret package:
+```{r}
+library(caret)
+
+```
+
+
+### Load Data
+
+Download data from the source and read it into training and test data sets. Load blank values as NA:
+```{r message=FALSE}
+download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 'pml-training.csv')
+trainRaw<-read.csv('pml-training.csv', header=TRUE, na.strings=c('','NA'))
+download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 'pml-testing.csv')
+testRaw<-read.csv('pml-testing.csv', header=TRUE, na.strings=c('','NA'))
+
+```
+
+### Data Cleaning
+
+Many of the columns are very sparsely populated. Remove any column with more than 50% NAs:
+```{r}
+
+trainRaw<- trainRaw[,colMeans(is.na(trainRaw)) <= 0.5 ]
+StandardTest<- testRaw[,colMeans(is.na(testRaw)) <= 0.5 ]
+
+```
+
+Check for near zero variance variables. These variables will be of limited usefulness when generating models. 
+```{r}
+nearZeroVar(trainRaw,saveMetrics=TRUE)
+```
+
+Only the new_window column has low variation. 
+
+We will remove timestamp, name and new_window columns. It is not clear from the data source discussion if the timestamps are meaningful. For the purposes of this exercise we will assume that they are not. The index column (column 1) will also be removed because the index of the 20 row test data set does not seem to be related to the index in the training data set. 
+```{r}
+StandardTest<- StandardTest[,-c(1,2,3,4,5,6)]
+trainRaw<-trainRaw[,-c(1,2,3,4,5,6)]
+```
+
+##Split Data
+
+Create test, train and validation data sets from main Train dataset
+```{r}
+inTrain<-createDataPartition(y=trainRaw$classe, p=0.7,list=FALSE)
+train<-trainRaw[inTrain,]
+testFull<-trainRaw[-inTrain,]
+inTest<-createDataPartition(y=testFull$classe, p=0.5,list=FALSE)
+test<-testFull[inTest,]
+validation<-testFull[-inTest,]
+```
+
+###Check for outliers
+
+Check if there are obvious outliers by creating a box plot on the scaled factors:
+
+```{r}
+trainCS <- scale(train[,-ncol(train)])
+boxplot(trainCS)
+```
+There are a few outliers, but not many.
+
+How many are there? Calculate the percentage of outliers more than 2 standard deviations from the mean, and how many are more than 10 SD from the meain:
+```{r}
+sum(abs(trainCS)>2)/(dim(trainCS)[1]*dim(trainCS)[2])
+sum(abs(trainCS)>10)
+```
+Only 3% of points are more than 2 SD from the mean and only 8 points out of 659,376 are more than 10 standard deviations away. We will ignore these for the purposes of this exercise. 
+
+
+## Model Creation
+
+Several models will be created using several methods covered in class. In addition to using various model types, different pre-processing will be tested for one method (PCA vs. Normalization). For the rest of the methods the data will be centered and scaled (a.k.a. normalized) since the factors seem to have different scales. We will try a Random Forest model, a Boosting model, a Naive Baynes model and a Linear Discriminant Analysis model. Go get a cup of coffee because this will take a while!
+
+```{r message=FALSE}
+fitRF<-train(classe~.,data=train,method="rf",preProcess="pca")
+fitRFCenter<-train(classe~.,data=train,method="rf",preProcess=c("center","scale"))
+fitGBMCenter<-train(classe~.,data=train,method="gbm",preProcess=c("center","scale"))
+fitLDACenter<-train(classe~.,data=train,method="lda",preProcess=c("center","scale"))
+
+```
+## Outcomes vs. the Training data set
+
+Cross validation of each model will be done using the test data set. The model with the best accuracy will be chosen as the winner. 
+
+### Random Forest with PCA pre-processing
+```{r}
+confusionMatrix(test$classe, predict(fitRF, test))$overall
+```
+
+### Random Forest with Center and Scale pre-processing
+```{r}
+confusionMatrix(test$classe, predict(fitRFCenter, test))$overall
+```
+
+### GBM with Center and scale pre-processing
+```{r}
+confusionMatrix(test$classe, predict(fitGBMCenter, test))$overall
+```
+
+
+### Linear Discriminant Analysis with Center and scale pre-processing
+```{r}
+confusionMatrix(test$classe, predict(fitLDACenter, test))$overall
+```
+
+
+
+###Model Choice
+The Random Forest with centering and scaling pre-processing model has the best accuracy. fitRFCenter will be used going forward. 
+
+
+##Final Validation
+
+The fitRFCenter model will be run against the Validation data set to get estimates of its accuracy:
+
+```{r}
+confusionMatrix(validation$classe, predict(fitRFCenter, validation))
+```
+
+Finally, it can be run against the StandardTest data set to provide answers for the quiz:
+```{r}
+predict(fitRFCenter, StandardTest)
+```
+
+These 20 predictions were all correct.
